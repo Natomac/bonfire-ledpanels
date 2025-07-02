@@ -1,0 +1,216 @@
+  /*
+    // MATRIX DECLARATION:
+  // Parameter 1 = width of NeoPixel matrix
+  // Parameter 2 = height of matrix
+  // Parameter 3 = pin number (most are valid)
+  // Parameter 4 = matrix layout flags, add together as needed:
+  //   NEO_MATRIX_TOP, NEO_MATRIX_BOTTOM, NEO_MATRIX_LEFT, NEO_MATRIX_RIGHT:
+  //     Position of the FIRST LED in the matrix; pick two, e.g.
+  //     NEO_MATRIX_TOP + NEO_MATRIX_LEFT for the top-left corner.
+  //   NEO_MATRIX_ROWS, NEO_MATRIX_COLUMNS: LEDs are arranged in horizontal
+  //     rows or in vertical columns, respectively; pick one or the other.
+  //   NEO_MATRIX_PROGRESSIVE, NEO_MATRIX_ZIGZAG: all rows/columns proceed
+  //     in the same order, or alternate lines reverse direction; pick one.
+  //   See example below for these values in action.
+  // Parameter 5 = pixel type flags, add together as needed:
+  //   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
+  //   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
+  //   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
+  //   NEO_GRBW    Pixels are wired for GRBW bitstream (RGB+W NeoPixel products)
+  //   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
+
+
+  // Example for NeoPixel Shield.  In this application we'd like to use it
+  // as a 5x8 tall matrix, with the USB port positioned at the top of the
+  // Arduino.  When held that way, the first pixel is at the top right, and
+  // lines are arranged in columns, progressive order.  The shield uses
+  // 800 KHz (v2) pixels that expect GRB color data.
+  */
+  #include <Arduino.h>
+  #include <Adafruit_GFX.h>
+  #include <Adafruit_NeoMatrix.h>
+  #include <Adafruit_NeoPixel.h>
+  #include <WiFi.h>
+  #include <PubSubClient.h>
+  //#include <Fonts/Tiny3x3a2pt7b.h>
+
+  #define WIFI_SSID "mangolaptop"
+  #define WIFI_PASS "iotempire"
+  const char* mqtt_server = "192.168.14.134";
+
+  WiFiClient espClient;
+  PubSubClient client(espClient);
+  unsigned long lastMsg = 0;
+  #define MSG_BUFFER_SIZE	(50)
+  char msg[MSG_BUFFER_SIZE];
+  char receivedMsg[MSG_BUFFER_SIZE]; // Buffer to store the received message
+  int value = 0;
+
+  #ifndef PSTR
+  #define PSTR // Make Arduino Due happy
+  #endif
+
+  #define PIN 26
+  #define CHAR_WIDTH 8 // Define the width of each character in pixels
+
+
+  Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(128, 8, PIN,
+    NEO_MATRIX_TOP    + NEO_MATRIX_LEFT +
+    NEO_MATRIX_COLUMNS + NEO_MATRIX_ZIGZAG,
+    NEO_GRB            + NEO_KHZ800);
+
+  uint16_t currentColor = matrix.Color(240, 100, 20); // Default color (orange)
+  //const uint16_t colors[] = {
+  //  matrix.Color(255, 0, random(0,255)), matrix.Color(0, 255, random(0,255)), matrix.Color(0, 0, random(0,255)) };
+
+  int x    = matrix.width();
+  int pass = 0;
+
+  void setup_wifi() {
+
+    delay(10);
+    // We start by connecting to a WiFi network
+    Serial.println();
+    Serial.print("Connecting to ");
+    Serial.println(WIFI_SSID);
+
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print("trying to connect to WiFi");
+    }
+
+    randomSeed(micros());
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  }
+
+  // Function to parse RGB values from a string in the format "rgb(108, 147, 134)"
+  uint16_t parseColor(const char* colorMsg) {
+    int r, g, b;
+    sscanf(colorMsg, "rgb(%d, %d, %d)", &r, &g, &b);
+    return matrix.Color(r, g, b);
+  }
+
+  void callback(char* topic, byte* payload, unsigned int length) {
+      // Create a temporary buffer to store the payload
+    char tempMsg[MSG_BUFFER_SIZE];
+    memset(tempMsg, 0, MSG_BUFFER_SIZE); // Clear the buffer
+    for (unsigned int i = 0; i < length; i++) {
+      tempMsg[i] = (char)payload[i];
+    }
+    tempMsg[length] = '\0'; // Null-terminate the string
+
+    // Serial.print("Message arrived [");
+    // Serial.print(topic);
+    // Serial.print("] ");
+    // for (int i = 0; i < length; i++) {
+    //   Serial.print((char)payload[i]);
+    // }
+    // Serial.println();
+
+    // Check if the topic is for color change
+    if (strcmp(topic, "rgb5") == 0) {
+      currentColor = parseColor(tempMsg);
+    } else if (strcmp(topic, "panel5") == 0) {
+      // Update the receivedMsg buffer only for text messages
+      strncpy(receivedMsg, tempMsg, MSG_BUFFER_SIZE);
+    }
+
+    // // Switch on the LED if an 1 was received as first character
+    // if ((char)payload[0] == '1') {
+    //   digitalWrite(BUILTIN_LED, HIGH);   // Turn the LED on (Note that LOW is the voltage level
+    //   // but actually the LED is on; this is because
+    //   // it is active low on the ESP-01)
+    // } else {
+    //   digitalWrite(BUILTIN_LED, LOW);  // Turn the LED off by making the voltage HIGH
+    // }
+
+  }
+
+  void reconnect() {
+    // Loop until we're reconnected
+    while (!client.connected()) {
+      Serial.print("Attempting MQTT connection...");
+      // Create a random client ID
+      String clientId = "ESP8266Client-";
+      clientId += String(random(0xffff), HEX);
+      // Attempt to connect
+      if (client.connect(clientId.c_str())) {
+        Serial.println("connected");
+        // Once connected, publish an announcement...
+        client.publish("panel5pub", "panel5");
+        // ... and resubscribe
+        client.subscribe("panel5");
+        client.subscribe("rgb5"); // Subscribe to the colorTopic
+
+      } else {
+        Serial.print("failed, rc=");
+        Serial.print(client.state());
+        Serial.println(" try again in 5 seconds");
+        // Wait 5 seconds before retrying
+        delay(5000);
+      }
+    }
+  }
+
+  void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+    Serial.begin(115200);
+    setup_wifi();
+    client.setServer(mqtt_server, 1883);
+    client.setCallback(callback);
+    client.subscribe("panel5"); // Subscribe to the inTopic
+    client.subscribe("rgb5"); // Subscribe to the colorTopic
+    matrix.begin();
+    matrix.setTextWrap(false);
+    matrix.setBrightness(40);
+    // matrix.setTextColor(colors[0]);
+    matrix.setTextColor(currentColor); // Update the text color
+    //matrix.setFont(&Tiny3x3a2pt7b);
+  }
+
+
+  void loop() {
+
+    if (!client.connected()) {
+      reconnect();
+    }
+    client.loop();
+
+    unsigned long now = millis();
+    if (now - lastMsg > 2000) {
+      lastMsg = now;
+      ++value;
+      snprintf (msg, MSG_BUFFER_SIZE, "hello world #%ld", value);
+      Serial.print("Publish message: ");
+      Serial.println(msg);
+      client.publish("panel5pub", msg);
+    }
+
+
+    matrix.fillScreen(0);
+    matrix.setCursor(x, 0);
+  //matrix.print(F("SANA SUN "));
+    matrix.print(receivedMsg); // Print the received message
+      //  matrix.setTextColor(colors[pass]);
+    matrix.setTextColor(currentColor); // Update the text color
+
+      // Calculate the width of the received message in pixels
+    int msgWidth = strlen(receivedMsg) * CHAR_WIDTH;
+
+    if(--x < -msgWidth) {
+      x = matrix.width();
+      if(++pass >= 3) pass = 0;
+    }
+    matrix.show();
+    delay(50);
+  }
+
+
+
